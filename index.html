@@ -37,6 +37,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xlsx-js-style@1.2.0/dist/xlsx.bundle.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
     <style>
       .app-container {
@@ -431,6 +432,25 @@
               id="dashAlertas"
               class="flex flex-col gap-2 mb-6 empty:hidden"
             ></div>
+
+            <div
+              id="cardDashCobrancas"
+              class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 dark:border-zinc-800 mb-6 hidden"
+            >
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-bold text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+                  <i class="fa-brands fa-whatsapp text-emerald-600"></i> Cobranças Pendentes
+                </h3>
+                <button
+                  data-view="cobrancas"
+                  class="navbtn-link text-xs font-semibold text-emerald-700 dark:text-emerald-400 hover:underline"
+                  onclick="document.querySelector('.navbtn[data-view=cobrancas]').click()"
+                >
+                  Ver todas
+                </button>
+              </div>
+              <ul id="dashCobrancas" class="space-y-2"></ul>
+            </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div
@@ -1386,6 +1406,40 @@
       </div>
 
       <div
+        id="modalPixQr"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50"
+      >
+        <div
+          class="bg-white dark:bg-zinc-900 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-zinc-100 dark:border-zinc-700 text-center"
+        >
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold text-lg text-zinc-800 dark:text-white">
+              QR Code PIX
+            </h3>
+            <button onclick="closeModalPixQr()">
+              <i class="fa-solid fa-xmark text-zinc-500"></i>
+            </button>
+          </div>
+          <div id="pixQrCode" class="flex justify-center mb-4 bg-white p-3 rounded-xl inline-block mx-auto"></div>
+          <p class="text-xs text-zinc-500 mb-2">
+            Escaneie com o app do banco ou copie o código Pix Copia e Cola abaixo.
+          </p>
+          <textarea
+            id="pixQrPayload"
+            readonly
+            rows="3"
+            class="w-full px-3 py-2 border rounded-lg bg-zinc-50 dark:bg-zinc-800 dark:text-white text-xs mb-3 resize-none"
+          ></textarea>
+          <button
+            onclick="copyPixPayload()"
+            class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors"
+          >
+            Copiar Código Pix
+          </button>
+        </div>
+      </div>
+
+      <div
         id="modalSettings"
         class="fixed inset-0 bg-black/60 backdrop-blur-sm hidden items-center justify-center p-4 z-50"
       >
@@ -1415,6 +1469,28 @@
                 <option value="EUR">Euro (EUR)</option>
               </select>
             </div>
+            <div class="pt-4 border-t dark:border-zinc-700">
+              <h4 class="font-bold text-zinc-700 dark:text-zinc-300 mb-2">
+                Dados do Recebedor PIX (para QR Code)
+              </h4>
+              <input
+                id="setPixNome"
+                placeholder="Nome do Recebedor (ex: Victor Lanes)"
+                class="w-full mb-2 px-3 py-2 border rounded-lg bg-zinc-50 dark:bg-zinc-800 dark:text-white"
+              />
+              <input
+                id="setPixCidade"
+                placeholder="Cidade (ex: Rio de Janeiro)"
+                class="w-full mb-2 px-3 py-2 border rounded-lg bg-zinc-50 dark:bg-zinc-800 dark:text-white"
+              />
+              <button
+                id="btnSavePixInfo"
+                class="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors"
+              >
+                Salvar Dados do Recebedor
+              </button>
+            </div>
+
             <div class="pt-4 border-t dark:border-zinc-700">
               <h4 class="font-bold text-zinc-700 dark:text-zinc-300 mb-2">
                 Alterar Senha
@@ -1514,6 +1590,8 @@
       function normalizeUserData(data) {
         if (!data) return seedUser(currentUser || "user");
         data.settings = data.settings || { currency: "BRL" };
+        data.settings.pixNome = data.settings.pixNome || "";
+        data.settings.pixCidade = data.settings.pixCidade || "";
         data.accounts = Array.isArray(data.accounts) ? data.accounts : [];
         data.categories = Array.isArray(data.categories) ? data.categories : [];
         data.cards = Array.isArray(data.cards) ? data.cards : [];
@@ -2045,6 +2123,114 @@
         doc.save(`Fatura_${card.name}_${month}.pdf`);
       }
 
+      // ================= PIX QR CODE (Payload EMV / Copia e Cola) =================
+      const normalizeAscii = (value) =>
+        String(value || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .replace(/[^a-zA-Z0-9 ]/g, "")
+          .toUpperCase();
+
+      function crc16Pix(payload) {
+        let crc = 0xffff;
+        const polynomial = 0x1021;
+        for (let i = 0; i < payload.length; i++) {
+          crc ^= payload.charCodeAt(i) << 8;
+          for (let j = 0; j < 8; j++) {
+            crc = (crc & 0x8000) !== 0 ? (crc << 1) ^ polynomial : crc << 1;
+            crc &= 0xffff;
+          }
+        }
+        return crc.toString(16).toUpperCase().padStart(4, "0");
+      }
+
+      function emvField(id, value) {
+        const v = String(value);
+        const len = v.length.toString().padStart(2, "0");
+        return `${id}${len}${v}`;
+      }
+
+      function buildPixPayload({ pixKey, amount, merchantName, merchantCity, description, txid }) {
+        if (!pixKey) throw new Error("Chave PIX não informada.");
+
+        let merchantAccountInfoValue = emvField("00", "br.gov.bcb.pix") + emvField("01", pixKey);
+        if (description) {
+          merchantAccountInfoValue += emvField("02", normalizeAscii(description).substring(0, 25) || "COBRANCA");
+        }
+        const merchantAccountInfo = emvField("26", merchantAccountInfoValue);
+
+        const payloadFormatIndicator = emvField("00", "01");
+        const merchantCategoryCode = emvField("52", "0000");
+        const transactionCurrency = emvField("53", "986");
+        const transactionAmount = amount > 0 ? emvField("54", Number(amount).toFixed(2)) : "";
+        const countryCode = emvField("58", "BR");
+        const merchantNameField = emvField(
+          "59",
+          (normalizeAscii(merchantName).substring(0, 25) || "NAO INFORMADO"),
+        );
+        const merchantCityField = emvField(
+          "60",
+          (normalizeAscii(merchantCity).substring(0, 15) || "BRASIL"),
+        );
+        const txidClean = String(txid || "***").replace(/[^a-zA-Z0-9*]/g, "").substring(0, 25) || "***";
+        const additionalData = emvField("62", emvField("05", txidClean));
+
+        let payload =
+          payloadFormatIndicator +
+          merchantAccountInfo +
+          merchantCategoryCode +
+          transactionCurrency +
+          transactionAmount +
+          countryCode +
+          merchantNameField +
+          merchantCityField +
+          additionalData +
+          "6304";
+
+        return payload + crc16Pix(payload);
+      }
+
+      window.gerarQrPix = function (desc, valor, pixKey, txidSeed) {
+        const d = loadUser();
+        if (!pixKey) return alert("Esta cobrança/boleto não tem chave PIX cadastrada.");
+        if (typeof QRCode === "undefined") {
+          return alert("Biblioteca de QR Code não carregou. Atualize a página e tente novamente.");
+        }
+        try {
+          const payload = buildPixPayload({
+            pixKey,
+            amount: valor,
+            merchantName: d.settings.pixNome || currentUser || "RECEBEDOR",
+            merchantCity: d.settings.pixCidade || "BRASIL",
+            description: desc,
+            txid: (txidSeed || "").replace(/-/g, "").substring(0, 25),
+          });
+          $("#pixQrPayload").value = payload;
+          $("#pixQrCode").innerHTML = "";
+          new QRCode($("#pixQrCode"), { text: payload, width: 220, height: 220 });
+          $("#modalPixQr").classList.remove("hidden");
+          $("#modalPixQr").classList.add("flex");
+        } catch (e) {
+          alert("Erro ao gerar QR Code Pix: " + e.message);
+        }
+      };
+
+      window.closeModalPixQr = () => {
+        $("#modalPixQr").classList.add("hidden");
+        $("#modalPixQr").classList.remove("flex");
+      };
+
+      window.copyPixPayload = async () => {
+        const val = $("#pixQrPayload").value;
+        if (!val) return;
+        try {
+          await navigator.clipboard.writeText(val);
+          alert("Código Pix copiado! Cole no app do seu banco (Pix Copia e Cola).");
+        } catch (e) {
+          prompt("Copie o código Pix:", val);
+        }
+      };
+
       // ================= COBRANÇAS (PIX + WHATSAPP) =================
       function buildCobrancaMessage(c, cur) {
         const linhas = [
@@ -2521,8 +2707,21 @@
 
         window.closeSettings = () =>
           $("#modalSettings").classList.add("hidden");
-        $("#btnSettings").onclick = () =>
+        $("#btnSettings").onclick = () => {
+          const d = loadUser();
+          if (d) {
+            $("#setPixNome").value = d.settings.pixNome || "";
+            $("#setPixCidade").value = d.settings.pixCidade || "";
+          }
           $("#modalSettings").classList.remove("hidden");
+        };
+        $("#btnSavePixInfo").onclick = () => {
+          const d = loadUser();
+          d.settings.pixNome = $("#setPixNome").value.trim();
+          d.settings.pixCidade = $("#setPixCidade").value.trim();
+          saveUser(d);
+          alert("Dados do recebedor PIX salvos!");
+        };
         $("#setCurrency").onchange = (e) => {
           const d = loadUser();
           d.settings.currency = e.target.value;
@@ -2889,6 +3088,32 @@
             '<div class="text-sm text-zinc-500">Nenhuma meta cadastrada.</div>';
         }
 
+        // Render Cobranças Pendentes no Dash
+        if ($("#dashCobrancas") && $("#cardDashCobrancas")) {
+          const pendentes = d.cobrancas
+            .filter((c) => !c.paga)
+            .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+            .slice(0, 5);
+
+          $("#cardDashCobrancas").classList.toggle("hidden", pendentes.length === 0);
+
+          $("#dashCobrancas").innerHTML = pendentes
+            .map(
+              (c) => `
+              <li class="flex items-center justify-between gap-3 p-3 bg-emerald-50 dark:bg-emerald-900/10 rounded-lg border border-emerald-100 dark:border-emerald-800/30">
+                <div class="min-w-0">
+                  <div class="font-medium text-sm text-emerald-900 dark:text-emerald-300 break-words">${escapeHtml(c.desc)}${c.pagador ? " • " + escapeHtml(c.pagador) : ""}</div>
+                  <div class="text-xs text-zinc-500">${fmt(c.valor, cur)}</div>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <button onclick="enviarCobrancaWhatsApp('${c.id}')" class="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center"><i class="fa-brands fa-whatsapp text-sm"></i></button>
+                  <button onclick='gerarQrPix(${JSON.stringify(c.desc)}, ${c.valor}, ${JSON.stringify(c.pix)}, ${JSON.stringify(c.id)})' class="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center"><i class="fa-solid fa-qrcode text-sm"></i></button>
+                </div>
+              </li>`,
+            )
+            .join("");
+        }
+
         // Render Boletos no Dash e Alertas
         if ($("#dashBoletos") && $("#dashAlertas")) {
           const hoje = new Date().toISOString().slice(0, 10);
@@ -3049,6 +3274,7 @@
                 <div class="flex items-center gap-2 flex-wrap sm:justify-end">
                   <button onclick="editBoleto('${b.id}')" class="px-3 py-1.5 rounded-lg bg-white dark:bg-zinc-800 border text-sm">Editar</button>
                   <button onclick='copyPix(${JSON.stringify(b.pix || "")})' class="px-3 py-1.5 rounded-lg bg-orange-600 text-white text-sm ${b.pix ? '' : 'hidden'}">Copiar PIX</button>
+                  <button onclick='gerarQrPix(${JSON.stringify(b.desc)}, ${b.valor}, ${JSON.stringify(b.pix || "")}, ${JSON.stringify(b.id)})' class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm ${b.pix ? '' : 'hidden'}"><i class="fa-solid fa-qrcode"></i> QR Code</button>
                   <button onclick="delBoleto('${b.id}')" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm">Excluir</button>
                 </div>
               </div>
@@ -3112,6 +3338,7 @@
                 </div>
                 <div class="flex items-center gap-2 flex-wrap sm:justify-end">
                   <button onclick="enviarCobrancaWhatsApp('${c.id}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-bold flex items-center gap-1"><i class="fa-brands fa-whatsapp"></i> Enviar</button>
+                  <button onclick='gerarQrPix(${JSON.stringify(c.desc)}, ${c.valor}, ${JSON.stringify(c.pix)}, ${JSON.stringify(c.id)})' class="px-3 py-1.5 rounded-lg bg-indigo-600 text-white text-sm font-bold flex items-center gap-1"><i class="fa-solid fa-qrcode"></i> QR Code</button>
                   <button onclick="copyCobranca('${c.id}')" class="px-3 py-1.5 rounded-lg bg-white dark:bg-zinc-800 border text-sm">Copiar mensagem</button>
                   <button onclick="marcarCobrancaPaga('${c.id}')" class="px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-sm">${c.paga ? "Reabrir" : "Marcar paga"}</button>
                   <button onclick="editCobranca('${c.id}')" class="px-3 py-1.5 rounded-lg bg-white dark:bg-zinc-800 border text-sm">Editar</button>
