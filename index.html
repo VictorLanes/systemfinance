@@ -406,6 +406,14 @@
               </li>
               <li>
                 <button
+                  data-view="cobrancas"
+                  class="navbtn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
+                >
+                  <i class="fa-brands fa-whatsapp w-5 text-center"></i>Cobranças
+                </button>
+              </li>
+              <li>
+                <button
                   data-view="backup"
                   class="navbtn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-all"
                 >
@@ -1197,6 +1205,95 @@
 
                       </section>
 
+          <section id="view-cobrancas" class="view hidden space-y-6">
+            <div
+              class="bg-white p-6 rounded-2xl shadow-sm border border-zinc-100 dark:border-zinc-800"
+            >
+              <div class="flex items-center gap-2 mb-4 text-emerald-600">
+                <i class="fa-brands fa-whatsapp text-xl"></i>
+                <h3 class="font-bold text-zinc-800 dark:text-zinc-200">
+                  Gerar Cobrança (PIX + WhatsApp)
+                </h3>
+              </div>
+              <p class="text-sm text-zinc-500 mb-4">
+                Preencha os dados da cobrança para gerar uma mensagem pronta com o valor e a chave PIX, e envie direto para o WhatsApp da pessoa.
+              </p>
+
+              <form
+                id="formCobranca"
+                class="p-4 bg-emerald-50 dark:bg-emerald-900/10 rounded-xl border border-emerald-100 dark:border-emerald-800/30 mb-4 grid grid-cols-1 md:grid-cols-12 gap-3"
+              >
+                <input type="hidden" id="cobEditId" />
+
+                <div class="md:col-span-6">
+                  <label class="block text-[11px] font-bold text-zinc-500 uppercase ml-1 mb-1">Nome da Despesa / Motivo</label>
+                  <input
+                    id="cobDesc"
+                    placeholder="Ex: Rateio do jantar"
+                    class="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                    required
+                  />
+                </div>
+                <div class="md:col-span-3">
+                  <label class="block text-[11px] font-bold text-zinc-500 uppercase ml-1 mb-1">Valor</label>
+                  <input
+                    id="cobValor"
+                    type="number"
+                    step="0.01"
+                    placeholder="0,00"
+                    class="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                    required
+                  />
+                </div>
+                <div class="md:col-span-3">
+                  <label class="block text-[11px] font-bold text-zinc-500 uppercase ml-1 mb-1">Nome do Pagador</label>
+                  <input
+                    id="cobPagador"
+                    placeholder="Ex: João (opcional)"
+                    class="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                  />
+                </div>
+
+                <div class="md:col-span-6">
+                  <label class="block text-[11px] font-bold text-zinc-500 uppercase ml-1 mb-1">Chave PIX para Recebimento</label>
+                  <input
+                    id="cobPix"
+                    placeholder="CPF, e-mail, telefone ou chave aleatória"
+                    class="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                    required
+                  />
+                </div>
+                <div class="md:col-span-6">
+                  <label class="block text-[11px] font-bold text-zinc-500 uppercase ml-1 mb-1">WhatsApp do Pagador (opcional, com DDI+DDD)</label>
+                  <input
+                    id="cobTelefone"
+                    placeholder="Ex: 5521999999999"
+                    class="w-full px-3 py-2 bg-white border border-emerald-200 rounded-lg text-sm"
+                  />
+                </div>
+
+                <div class="md:col-span-12 flex gap-2">
+                  <button
+                    type="submit"
+                    id="btnSaveCobranca"
+                    class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white py-2 rounded-lg font-bold text-sm transition-colors"
+                  >
+                    Gerar Cobrança
+                  </button>
+                  <button
+                    type="button"
+                    id="btnCancelEditCobranca"
+                    class="hidden px-4 bg-zinc-200 text-zinc-700 rounded-lg font-bold text-sm hover:bg-zinc-300"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+
+              <ul id="listaCobrancas" class="space-y-3"></ul>
+            </div>
+          </section>
+
           <section id="view-backup" class="view hidden">
             <div
               class="bg-white p-8 rounded-2xl shadow-sm border border-zinc-100 dark:border-zinc-800 text-center"
@@ -1424,6 +1521,7 @@
         data.metas = Array.isArray(data.metas) ? data.metas : [];
         data.boletos = Array.isArray(data.boletos) ? data.boletos : [];
         data.anexos = Array.isArray(data.anexos) ? data.anexos : [];
+        data.cobrancas = Array.isArray(data.cobrancas) ? data.cobrancas : [];
         data.invoicesPaid = data.invoicesPaid || {};
 
         data.metas = data.metas.map((m) => ({
@@ -1444,6 +1542,12 @@
           ...a,
           createdAt: a.createdAt || Date.now(),
           expiraEm: a.expiraEm || Date.now() + 30 * 86400000,
+        }));
+
+        data.cobrancas = data.cobrancas.map((c) => ({
+          ...c,
+          createdAt: c.createdAt || Date.now(),
+          paga: !!c.paga,
         }));
 
         return pruneExpiredData(data);
@@ -1623,6 +1727,7 @@
         metas: [],
         boletos: [],
         anexos: [],
+        cobrancas: [],
       });
 
       const cryptoHash = async (str) => {
@@ -1939,6 +2044,75 @@
 
         doc.save(`Fatura_${card.name}_${month}.pdf`);
       }
+
+      // ================= COBRANÇAS (PIX + WHATSAPP) =================
+      function buildCobrancaMessage(c, cur) {
+        const linhas = [
+          `*Cobrança:* ${c.desc}`,
+          `*Valor:* ${fmt(c.valor, cur)}`,
+        ];
+        if (c.pagador) linhas.push(`*Para:* ${c.pagador}`);
+        linhas.push(`*Chave PIX:* ${c.pix}`);
+        linhas.push("");
+        linhas.push("Assim que possível, por favor realize o pagamento via PIX. Obrigado!");
+        return linhas.join("\n");
+      }
+
+      window.copyCobranca = async (id) => {
+        const d = loadUser();
+        const c = d.cobrancas.find((x) => x.id === id);
+        if (!c) return;
+        const msg = buildCobrancaMessage(c, d.settings.currency);
+        try {
+          await navigator.clipboard.writeText(msg);
+          alert("Mensagem de cobrança copiada!");
+        } catch (e) {
+          prompt("Copie a mensagem:", msg);
+        }
+      };
+
+      window.enviarCobrancaWhatsApp = (id) => {
+        const d = loadUser();
+        const c = d.cobrancas.find((x) => x.id === id);
+        if (!c) return;
+        const msg = buildCobrancaMessage(c, d.settings.currency);
+        const numero = (c.telefone || "").replace(/\D/g, "");
+        const base = numero
+          ? `https://wa.me/${numero}`
+          : `https://wa.me/`;
+        const url = `${base}?text=${encodeURIComponent(msg)}`;
+        window.open(url, "_blank");
+      };
+
+      window.marcarCobrancaPaga = (id) => {
+        const d = loadUser();
+        const c = d.cobrancas.find((x) => x.id === id);
+        if (!c) return;
+        c.paga = !c.paga;
+        saveUser(d);
+      };
+
+      window.editCobranca = (id) => {
+        const c = loadUser().cobrancas.find((x) => x.id === id);
+        if (!c) return;
+        $("#cobEditId").value = id;
+        $("#cobDesc").value = c.desc;
+        $("#cobValor").value = c.valor;
+        $("#cobPagador").value = c.pagador || "";
+        $("#cobPix").value = c.pix;
+        $("#cobTelefone").value = c.telefone || "";
+        $("#btnSaveCobranca").textContent = "Salvar Alterações";
+        $("#btnCancelEditCobranca").classList.remove("hidden");
+        $("#formCobranca").scrollIntoView({ behavior: "smooth" });
+      };
+
+      window.delCobranca = (id) => {
+        if (confirm("Excluir esta cobrança?")) {
+          const d = loadUser();
+          d.cobrancas = d.cobrancas.filter((x) => x.id !== id);
+          saveUser(d);
+        }
+      };
 
       // ================= LOGICA DE INICIALIZAÇÃO =================
 
@@ -2300,6 +2474,48 @@
             d.metas = d.metas.filter((x) => x.id !== id);
             saveUser(d);
           }
+        };
+
+        $("#formCobranca").onsubmit = (e) => {
+          e.preventDefault();
+          const d = loadUser();
+          const id = $("#cobEditId").value;
+          const cobData = {
+            desc: $("#cobDesc").value,
+            valor: parseNum($("#cobValor").value),
+            pagador: $("#cobPagador").value,
+            pix: $("#cobPix").value,
+            telefone: $("#cobTelefone").value,
+            updatedAt: Date.now(),
+          };
+
+          if (!cobData.desc || !cobData.pix || cobData.valor <= 0) {
+            return alert("Preencha nome da despesa, valor e chave PIX.");
+          }
+
+          if (id) {
+            const idx = d.cobrancas.findIndex((c) => c.id === id);
+            if (idx > -1) d.cobrancas[idx] = { ...d.cobrancas[idx], ...cobData };
+          } else {
+            d.cobrancas.push({
+              id: uuid(),
+              ...cobData,
+              paga: false,
+              createdAt: Date.now(),
+            });
+          }
+          saveUser(d);
+          $("#formCobranca").reset();
+          $("#cobEditId").value = "";
+          $("#btnSaveCobranca").textContent = "Gerar Cobrança";
+          $("#btnCancelEditCobranca").classList.add("hidden");
+        };
+
+        $("#btnCancelEditCobranca").onclick = () => {
+          $("#formCobranca").reset();
+          $("#cobEditId").value = "";
+          $("#btnSaveCobranca").textContent = "Gerar Cobrança";
+          $("#btnCancelEditCobranca").classList.add("hidden");
         };
 
 
@@ -2875,6 +3091,36 @@
             </li>`;
           })
           .join("") || `<li class="text-sm text-zinc-500">Nenhuma meta cadastrada.</li>`;
+
+        $("#listaCobrancas").innerHTML = d.cobrancas
+          .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+          .map((c) => {
+            const statusClasse = c.paga
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-yellow-100 text-yellow-700";
+            const statusTexto = c.paga ? "PAGA" : "AGUARDANDO";
+            return `<li class="p-4 rounded-xl border border-emerald-200 dark:border-emerald-800/30 bg-emerald-50 dark:bg-emerald-900/10 space-y-3">
+              <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-bold text-emerald-900 dark:text-emerald-300 break-words">${escapeHtml(c.desc)}</span>
+                    <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${statusClasse}">${statusTexto}</span>
+                  </div>
+                  <div class="text-sm text-zinc-600 dark:text-zinc-400">${c.pagador ? "Para: " + escapeHtml(c.pagador) + " • " : ""}Valor: ${fmt(c.valor, cur)}</div>
+                  <div class="text-xs text-zinc-500 mt-1">Chave PIX: ${escapeHtml(c.pix)}</div>
+                  ${c.telefone ? `<div class="text-xs text-zinc-500">WhatsApp: ${escapeHtml(c.telefone)}</div>` : ""}
+                </div>
+                <div class="flex items-center gap-2 flex-wrap sm:justify-end">
+                  <button onclick="enviarCobrancaWhatsApp('${c.id}')" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-bold flex items-center gap-1"><i class="fa-brands fa-whatsapp"></i> Enviar</button>
+                  <button onclick="copyCobranca('${c.id}')" class="px-3 py-1.5 rounded-lg bg-white dark:bg-zinc-800 border text-sm">Copiar mensagem</button>
+                  <button onclick="marcarCobrancaPaga('${c.id}')" class="px-3 py-1.5 rounded-lg bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 text-sm">${c.paga ? "Reabrir" : "Marcar paga"}</button>
+                  <button onclick="editCobranca('${c.id}')" class="px-3 py-1.5 rounded-lg bg-white dark:bg-zinc-800 border text-sm">Editar</button>
+                  <button onclick="delCobranca('${c.id}')" class="px-3 py-1.5 rounded-lg bg-red-600 text-white text-sm">Excluir</button>
+                </div>
+              </div>
+            </li>`;
+          })
+          .join("") || `<li class="text-sm text-zinc-500">Nenhuma cobrança gerada ainda.</li>`;
       }
 
             function fillSelects(d) {
