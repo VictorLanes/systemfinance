@@ -997,6 +997,7 @@
                   Contas Bancárias
                 </h3>
                 <form id="formConta" class="flex flex-col gap-3 mb-4">
+                  <input type="hidden" id="contaEditId" />
                   <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <select
                       id="contaBanco"
@@ -1028,11 +1029,19 @@
                     />
                     <button
                       type="submit"
+                      id="btnSaveConta"
                       class="bg-emerald-600 text-white px-4 h-12 rounded-lg font-bold w-full sm:w-auto sm:min-w-[112px]"
                     >
                       Adicionar
                     </button>
                   </div>
+                  <button
+                    type="button"
+                    id="btnCancelEditConta"
+                    class="hidden bg-zinc-200 hover:bg-zinc-300 text-zinc-700 px-4 h-10 rounded-lg font-bold text-sm"
+                  >
+                    Cancelar Edição
+                  </button>
                 </form>
                 <ul id="listaContas" class="space-y-2"></ul>
               </div>
@@ -2633,6 +2642,41 @@
 
           const data = loadUser();
 
+          // ===== MODO EDIÇÃO =====
+          const editId = $("#lancEditId").value;
+          if (editId) {
+            const idx = data.transactions.findIndex((t) => t.id === editId);
+            if (idx === -1) {
+              alert("Lançamento não encontrado.");
+              window.cancelEditTransaction();
+              return;
+            }
+            const orig = data.transactions[idx];
+            const atualizado = {
+              ...orig,
+              dateISO: d.dateISO,
+              type: d.type === "transferencia" ? orig.type : d.type,
+              amount: Number(d.amount) || 0,
+              description: d.description,
+              categoryId: d.categoryId,
+              method: d.method,
+              updatedAt: Date.now(),
+            };
+            if (orig.credit) {
+              // Mantém parcela / fatura; permite trocar o cartão
+              if (d.credit && d.credit.cardId)
+                atualizado.credit = { ...orig.credit, cardId: d.credit.cardId };
+              atualizado.accountId = null;
+            } else {
+              atualizado.accountId = $("#lancConta").value;
+            }
+            data.transactions[idx] = atualizado;
+            saveUser(data);
+            window.cancelEditTransaction();
+            alert("Lançamento atualizado!");
+            return;
+          }
+
           const base = { ...d, id: uuid(), amount: Number(d.amount) || 0 };
 
           let transactionsToSave = [];
@@ -2710,9 +2754,62 @@
           if (confirm("Excluir este lançamento?")) {
             const d = loadUser();
             d.transactions = d.transactions.filter((t) => t.id !== id);
+            if ($("#lancEditId").value === id) window.cancelEditTransaction();
             saveUser(d);
           }
         };
+
+        window.editTransaction = (id) => {
+          const d = loadUser();
+          const t = d.transactions.find((x) => x.id === id);
+          if (!t) return;
+          $("#lancEditId").value = t.id;
+          $("#lancData").value = t.dateISO;
+          $("#lancTipo").value = t.type;
+          if (window.updateLancCats) window.updateLancCats();
+          $("#lancValor").value = Number(t.amount || 0).toFixed(2);
+          $("#lancDesc").value = t.description || "";
+          if (t.categoryId) $("#lancCat").value = t.categoryId;
+          $("#lancForma").value = t.method || (t.credit ? "credito" : "debito");
+          $("#wrapCredito").classList.toggle("hidden", !t.credit);
+          if (t.credit) {
+            $("#lancCartao").value = t.credit.cardId;
+            $("#lancParcelas").value = t.credit.total || 1;
+            $("#lancParcelas").disabled = true;
+            $("#lancPrimeiraFatura").disabled = true;
+          } else if (t.accountId) {
+            $("#lancConta").value = t.accountId;
+          }
+          // Recorrência e transferência não se aplicam na edição
+          $("#lancRecorrente").checked = false;
+          $("#lancRecorrente").disabled = true;
+          $("#wrapRecorrenteOps").classList.add("hidden");
+          const optTransf = $('#lancTipo option[value="transferencia"]');
+          if (optTransf) optTransf.disabled = true;
+
+          $("#formLancTitle").textContent = "Editar Lançamento";
+          $("#btnSaveLanc").textContent = "Salvar Alterações";
+          $("#btnCancelEditLanc").classList.remove("hidden");
+          $("#formLanc").scrollIntoView({ behavior: "smooth", block: "start" });
+        };
+
+        window.cancelEditTransaction = () => {
+          $("#formLanc").reset();
+          $("#lancEditId").value = "";
+          $("#lancData").value = todayISO();
+          $("#lancParcelas").disabled = false;
+          $("#lancPrimeiraFatura").disabled = false;
+          $("#lancRecorrente").disabled = false;
+          $("#wrapRecorrenteOps").classList.add("hidden");
+          $("#wrapCredito").classList.add("hidden");
+          const optTransf = $('#lancTipo option[value="transferencia"]');
+          if (optTransf) optTransf.disabled = false;
+          if (window.updateLancCats) window.updateLancCats();
+          $("#formLancTitle").textContent = "Novo Lançamento";
+          $("#btnSaveLanc").textContent = "Salvar Lançamento";
+          $("#btnCancelEditLanc").classList.add("hidden");
+        };
+        $("#btnCancelEditLanc").onclick = () => window.cancelEditTransaction();
 
         $("#formBoleto").onsubmit = (e) => {
           e.preventDefault();
@@ -2929,16 +3026,52 @@
           e.preventDefault();
           const d = loadUser();
           const b = $("#contaBanco").value;
-          const apelido = $("#contaNome").value;
+          const apelido = $("#contaNome").value.trim();
+          const nome = b ? b + " - " + apelido : apelido;
+          const editId = $("#contaEditId").value;
+          if (editId) {
+            const acc = d.accounts.find((x) => x.id === editId);
+            if (acc) {
+              if (!nome) return alert("Informe o nome da conta.");
+              acc.name = nome;
+              acc.opening = parseNum($("#contaSaldoIni").value) || 0;
+              acc.updatedAt = Date.now();
+            }
+            window.cancelEditAccount();
+            saveUser(d);
+            return;
+          }
           d.accounts.push({
             id: uuid(),
-            name: b ? b + " - " + apelido : apelido,
+            name: nome,
             opening: parseNum($("#contaSaldoIni").value),
             type: "Conta corrente",
           });
           saveUser(d);
           e.target.reset();
         };
+
+        window.editAccount = (id) => {
+          const d = loadUser();
+          const a = d.accounts.find((x) => x.id === id);
+          if (!a) return;
+          $("#contaEditId").value = a.id;
+          $("#contaBanco").value = "";
+          $("#contaNome").value = a.name || "";
+          $("#contaSaldoIni").value = Number(a.opening || 0).toFixed(2);
+          $("#btnSaveConta").textContent = "Salvar";
+          $("#btnCancelEditConta").classList.remove("hidden");
+          $("#formConta").scrollIntoView({ behavior: "smooth", block: "center" });
+          $("#contaNome").focus();
+        };
+
+        window.cancelEditAccount = () => {
+          $("#formConta").reset();
+          $("#contaEditId").value = "";
+          $("#btnSaveConta").textContent = "Adicionar";
+          $("#btnCancelEditConta").classList.add("hidden");
+        };
+        $("#btnCancelEditConta").onclick = () => window.cancelEditAccount();
         $("#formCartao").onsubmit = (e) => {
           e.preventDefault();
           const d = loadUser();
@@ -2967,9 +3100,14 @@
         };
 
         window.delAccount = (id) => {
-          if (confirm("Excluir conta?")) {
-            const d = loadUser();
+          const d = loadUser();
+          const qtd = d.transactions.filter((t) => t.accountId === id).length;
+          const msg = qtd
+            ? `Excluir conta? Ela possui ${qtd} lançamento(s) vinculado(s), que ficarão sem conta.`
+            : "Excluir conta?";
+          if (confirm(msg)) {
             d.accounts = d.accounts.filter((x) => x.id !== id);
+            if ($("#contaEditId").value === id) window.cancelEditAccount();
             saveUser(d);
           }
         };
@@ -3394,7 +3532,7 @@
                 <td class="p-3 hidden sm:table-cell text-xs text-zinc-500">${escapeHtml(cm[t.categoryId] || "")}</td>
                 <td class="p-3 hidden sm:table-cell text-xs text-zinc-500">${escapeHtml(t.accountId ? am[t.accountId] : t.credit ? "Fatura" : "")}</td>
                 <td class="p-3 text-right font-bold ${t.type === "saída" ? "text-red-600" : "text-emerald-600"}">${fmt(t.amount, cur)}</td>
-                <td class="p-3 text-center"><button onclick="deleteTransaction('${t.id}')"><i class="fa-solid fa-trash text-zinc-300 hover:text-red-500"></i></button></td>
+                <td class="p-3 text-center whitespace-nowrap"><button onclick="editTransaction('${t.id}')" title="Editar" class="px-1"><i class="fa-solid fa-pen text-zinc-300 hover:text-blue-500"></i></button><button onclick="deleteTransaction('${t.id}')" title="Excluir" class="px-1"><i class="fa-solid fa-trash text-zinc-300 hover:text-red-500"></i></button></td>
             </tr>`,
           )
           .join("");
@@ -3413,7 +3551,7 @@
                   (s, t) => s + (t.type === "entrada" ? t.amount : -t.amount),
                   0,
                 );
-            return `<li class="flex justify-between items-center gap-3 p-2 bg-zinc-50 dark:bg-zinc-800 rounded border border-zinc-100 dark:border-zinc-700 text-sm"><span class="font-medium dark:text-zinc-200 break-words min-w-0 flex-1">${escapeHtml(a.name)}</span><span class="text-zinc-600 dark:text-zinc-400 whitespace-nowrap">${fmt(b, cur)}</span><button onclick="delAccount('${a.id}')" class="ml-2 text-zinc-300 hover:text-red-500 flex-shrink-0"><i class="fa-solid fa-xmark"></i></button></li>`;
+            return `<li class="flex justify-between items-center gap-3 p-2 bg-zinc-50 dark:bg-zinc-800 rounded border border-zinc-100 dark:border-zinc-700 text-sm"><div class="min-w-0 flex-1"><div class="font-medium dark:text-zinc-200 break-words">${escapeHtml(a.name)}</div><div class="text-[11px] text-zinc-400">Saldo inicial: ${fmt(a.opening || 0, cur)}</div></div><span class="text-zinc-600 dark:text-zinc-400 whitespace-nowrap">${fmt(b, cur)}</span><button onclick="editAccount('${a.id}')" title="Editar conta / saldo inicial" class="ml-1 text-zinc-300 hover:text-blue-500 flex-shrink-0"><i class="fa-solid fa-pen"></i></button><button onclick="delAccount('${a.id}')" title="Excluir conta" class="ml-1 text-zinc-300 hover:text-red-500 flex-shrink-0"><i class="fa-solid fa-trash"></i></button></li>`;
           })
           .join("");
 
