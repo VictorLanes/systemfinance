@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0"
     />
-    <title>Sistema Financeiro V12 - Google Sheets</title>
+    <title>Sistema Financeiro V12 - Supabase</title>
 
     <link rel="manifest" href="manifest.json" />
     <meta name="theme-color" content="#10b981" />
@@ -38,6 +38,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+    <!-- Supabase JS v2 -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
     <style>
       .app-container {
@@ -205,7 +207,7 @@
           <form id="formLogin" class="space-y-4">
             <div>
               <label class="text-xs font-bold text-zinc-500 uppercase ml-1"
-                >Usuário</label
+                >Usuário ou e-mail</label
               >
               <input
                 id="loginUser"
@@ -240,6 +242,7 @@
             </div>
             <button
               type="submit"
+              id="btnLoginSubmit"
               class="w-full py-3.5 rounded-xl bg-emerald-600 text-white font-bold shadow-lg hover:bg-emerald-700 transition-all"
             >
               Acessar Sistema
@@ -282,6 +285,7 @@
             </div>
             <button
               type="submit"
+              id="btnRegisterSubmit"
               class="w-full py-3.5 rounded-xl bg-emerald-600 text-white font-bold shadow-lg hover:bg-emerald-700 transition-all"
             >
               Criar Conta
@@ -323,6 +327,10 @@
             </div>
           </div>
           <div class="flex items-center gap-2">
+            <span
+              id="syncStatus"
+              class="hidden sm:inline text-xs text-zinc-400 mr-1"
+            ></span>
             <button
               id="btnTheme"
               class="w-10 h-10 rounded-full hover:bg-zinc-100 dark:hover:bg-zinc-800 text-zinc-600 dark:text-zinc-300 flex items-center justify-center transition-colors"
@@ -1327,7 +1335,7 @@
                 Backup de Dados
               </h3>
               <p class="text-zinc-500 text-sm mb-6">
-                Seus dados principais ficam no Google Sheets. O backup JSON é opcional para migração e auditoria local.
+                Seus dados principais ficam no Supabase. O backup JSON é opcional para migração e auditoria local.
               </p>
               <div class="flex flex-col sm:flex-row justify-center gap-4">
                 <button
@@ -1504,7 +1512,7 @@
               <input
                 id="newPass"
                 type="password"
-                placeholder="Nova Senha"
+                placeholder="Nova Senha (mín. 6 caracteres)"
                 class="w-full mb-2 px-3 py-2 border rounded-lg bg-zinc-50"
               />
               <button
@@ -1657,39 +1665,202 @@
         return s.includes("credit") || s.includes("crédit");
       };
 
-      // ================= API GOOGLE SHEETS =================
-      const API_URL = "https://script.google.com/macros/s/AKfycbzDGWEnsWR8IjwG4FrSP_RSR9MGyEif14kEBsQpd9RR26aEJNF0Vv_pTc-21tC9a5CB/exec";
+      // ================= SUPABASE =================
+      // 1) Supabase > Project Settings > API: copie a "Project URL" e a chave
+      //    pública (anon / publishable). NUNCA use a service_role aqui.
+      const SUPABASE_URL = "https://biasizgjbkhzhfyngato.supabase.co";
+      const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJpYXNpemdqYmtoemhmeW5nYXRvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA3OTE2MzcsImV4cCI6MjEwNjM2NzYzN30.qsudUFfdVsXXol3SmFUgU3rrjpA6vzB2cJJh5I-7TTM";
+
+      // Usuários sem e-mail viram "usuario@<domínio>" no Supabase Auth.
+      // Com "Confirm email" desligado, nenhum e-mail é enviado para esse endereço.
+      const AUTH_EMAIL_DOMAIN = "gestorfluxo.app";
+      const DATA_TABLE = "finance_data";
+      const REMEMBER_KEY = "finapp_remember";
+
+      // Armazena a sessão no localStorage (manter conectado) ou sessionStorage (fecha ao sair do navegador)
+      const authStorage = {
+        getItem: (k) => localStorage.getItem(k) ?? sessionStorage.getItem(k),
+        setItem: (k, v) => {
+          if (localStorage.getItem(REMEMBER_KEY) === "1") {
+            localStorage.setItem(k, v);
+            sessionStorage.removeItem(k);
+          } else {
+            sessionStorage.setItem(k, v);
+            localStorage.removeItem(k);
+          }
+        },
+        removeItem: (k) => {
+          localStorage.removeItem(k);
+          sessionStorage.removeItem(k);
+        },
+      };
+
+      const supabaseConfigurado =
+        !SUPABASE_URL.includes("SEU-PROJETO") &&
+        !SUPABASE_ANON_KEY.includes("COLE_AQUI");
+
+      const sb =
+        supabaseConfigurado && window.supabase
+          ? window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+              auth: {
+                storage: authStorage,
+                persistSession: true,
+                autoRefreshToken: true,
+                detectSessionInUrl: false,
+              },
+            })
+          : null;
 
       let currentUser = null;
+      let currentUserId = null;
       let userDataCache = null;
 
+      const usernameToEmail = (u) => {
+        const v = String(u || "").trim().toLowerCase();
+        return v.includes("@") ? v : `${v}@${AUTH_EMAIL_DOMAIN}`;
+      };
+
+      const usernameFromUser = (user) =>
+        user?.user_metadata?.username ||
+        String(user?.email || "").split("@")[0] ||
+        "user";
+
+      function traduzErroAuth(error) {
+        const msg = String(error?.message || error || "");
+        if (/invalid login credentials/i.test(msg)) return "Usuário ou senha inválidos.";
+        if (/already registered|already exists/i.test(msg)) return "Este usuário já existe.";
+        if (/email not confirmed/i.test(msg))
+          return "E-mail ainda não confirmado. Desative 'Confirm email' no Supabase ou confirme pelo link recebido.";
+        if (/password should be at least/i.test(msg)) return "A senha deve ter pelo menos 6 caracteres.";
+        if (/invalid.*email|email.*invalid/i.test(msg)) return "Usuário inválido. Use apenas letras, números, ponto, hífen ou _.";
+        if (/rate limit/i.test(msg)) return "Muitas tentativas. Aguarde alguns minutos.";
+        if (/failed to fetch/i.test(msg)) return "Sem conexão com o servidor. Verifique sua internet.";
+        return msg || "Erro ao comunicar com o Supabase.";
+      }
+
+      function setSyncStatus(texto) {
+        const el = $("#syncStatus");
+        if (el) el.textContent = texto || "";
+      }
+
+      async function carregarDadosDoBanco() {
+        const { data: row, error } = await sb
+          .from(DATA_TABLE)
+          .select("data, username")
+          .eq("user_id", currentUserId)
+          .maybeSingle();
+        if (error) throw new Error(error.message);
+
+        const vazio = !row || !row.data || Object.keys(row.data).length === 0;
+        if (vazio) {
+          // Primeiro acesso: cria os dados iniciais (contas e categorias padrão)
+          const seed = seedUser(currentUser);
+          await salvarDadosNoBanco(seed);
+          return seed;
+        }
+        return row.data;
+      }
+
+      async function salvarDadosNoBanco(data) {
+        const { error } = await sb.from(DATA_TABLE).upsert(
+          { user_id: currentUserId, username: currentUser, data },
+          { onConflict: "user_id" },
+        );
+        if (error) throw new Error(error.message);
+      }
+
+      // Mantém a mesma assinatura usada antes com o Apps Script,
+      // assim o resto do sistema não precisou mudar.
       async function apiRequest(action, payload = {}) {
-        if (!API_URL || API_URL.includes("COLE_AQUI")) {
-          throw new Error("Configure a constante API_URL com a URL do Apps Script.");
+        if (!sb) {
+          throw new Error(
+            "Configure SUPABASE_URL e SUPABASE_ANON_KEY no código.",
+          );
         }
 
-        const res = await fetch(API_URL, {
-          method: "POST",
-          redirect: "follow",
-          headers: {
-            "Content-Type": "text/plain;charset=utf-8",
-          },
-          body: JSON.stringify({ action, ...payload }),
-        });
+        switch (action) {
+          case "login": {
+            const { data, error } = await sb.auth.signInWithPassword({
+              email: usernameToEmail(payload.username),
+              password: payload.password,
+            });
+            if (error) throw new Error(traduzErroAuth(error));
+            currentUserId = data.user.id;
+            currentUser = usernameFromUser(data.user);
+            return { ok: true, data: await carregarDadosDoBanco() };
+          }
 
-        const text = await res.text();
-        let data = {};
-        try {
-          data = JSON.parse(text);
-        } catch (e) {
-          throw new Error("Resposta inválida da API: " + text.slice(0, 120));
+          case "register": {
+            const raw = String(payload.username || "").trim().toLowerCase();
+            const username = raw.includes("@") ? raw.split("@")[0] : raw;
+            if (!/^[a-z0-9._-]{3,30}$/.test(username)) {
+              throw new Error(
+                "Usuário deve ter de 3 a 30 caracteres: letras, números, ponto, hífen ou _.",
+              );
+            }
+            const { data, error } = await sb.auth.signUp({
+              email: usernameToEmail(raw),
+              password: payload.password,
+              options: { data: { username } },
+            });
+            if (error) throw new Error(traduzErroAuth(error));
+            // Supabase devolve usuário sem identidades quando o e-mail já existe
+            if (data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0) {
+              throw new Error("Este usuário já existe.");
+            }
+            if (data.session) {
+              currentUserId = data.user.id;
+              currentUser = username;
+              await salvarDadosNoBanco(payload.seedData || seedUser(username));
+              await sb.auth.signOut();
+              currentUserId = null;
+              currentUser = null;
+              return { ok: true, needsConfirmation: false };
+            }
+            return { ok: true, needsConfirmation: true };
+          }
+
+          case "loadUser": {
+            const { data: { user } } = await sb.auth.getUser();
+            if (!user) throw new Error("Sessão expirada. Faça login novamente.");
+            currentUserId = user.id;
+            currentUser = usernameFromUser(user);
+            return { ok: true, data: await carregarDadosDoBanco() };
+          }
+
+          case "saveUser": {
+            if (!currentUserId) throw new Error("Sessão expirada. Faça login novamente.");
+            await salvarDadosNoBanco(payload.data);
+            return { ok: true };
+          }
+
+          case "changePassword": {
+            if (!payload.newPassword || payload.newPassword.length < 6) {
+              throw new Error("A nova senha deve ter pelo menos 6 caracteres.");
+            }
+            const { data: { user } } = await sb.auth.getUser();
+            if (!user) throw new Error("Sessão expirada. Faça login novamente.");
+            // Confirma a senha atual antes de trocar
+            const { error: errOld } = await sb.auth.signInWithPassword({
+              email: user.email,
+              password: payload.oldPassword,
+            });
+            if (errOld) throw new Error("Senha atual incorreta.");
+            const { error } = await sb.auth.updateUser({ password: payload.newPassword });
+            if (error) throw new Error(traduzErroAuth(error));
+            return { ok: true };
+          }
+
+          default:
+            throw new Error("Ação desconhecida: " + action);
         }
+      }
 
-        if (!data.ok) {
-          throw new Error(data.error || "Erro ao comunicar com a API.");
-        }
-
-        return data;
+      function mostrarApp() {
+        $("#auth").classList.add("hidden");
+        $("#app").classList.remove("hidden");
+        $("#app").classList.add("flex");
+        renderAll();
       }
 
       // ================= DARK MODE LOGIC =================
@@ -1771,13 +1942,7 @@
       };
 
 
-      // ================= DATABASE (Google Sheets via Apps Script) =================
-      const DBKEY = "finapp_v11_final";
-      const SESSION_KEY = "finapp_session_v11";
-
-      const getDB = () => JSON.parse(localStorage.getItem(DBKEY) || "{}");
-      const setDB = (d) => localStorage.setItem(DBKEY, JSON.stringify(d));
-
+      // ================= DATABASE (Supabase) =================
       const seedUser = (user) => ({
         profile: { user, created: Date.now() },
         settings: {
@@ -1808,25 +1973,20 @@
         cobrancas: [],
       });
 
-      const cryptoHash = async (str) => {
-        const enc = new TextEncoder().encode(str);
-        const buf = await crypto.subtle.digest("SHA-256", enc);
-        return Array.from(new Uint8Array(buf))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join("");
-      };
-
       const loadUser = () => userDataCache;
 
       const saveUser = async (data) => {
         if (!currentUser) return;
         userDataCache = normalizeUserData(data);
+        renderAll(); // atualiza a tela na hora, sem esperar a rede
+        setSyncStatus("Salvando…");
         try {
-          await apiRequest("saveUser", { username: currentUser, data });
-          renderAll();
+          await apiRequest("saveUser", { username: currentUser, data: userDataCache });
+          setSyncStatus("Salvo");
         } catch (err) {
           console.error(err);
-          alert("Erro ao salvar no Google Sheets: " + err.message);
+          setSyncStatus("Erro ao salvar");
+          alert("Erro ao salvar no Supabase: " + err.message);
         }
       };
 
@@ -2313,23 +2473,21 @@
         $("#btnTheme").onclick = toggleTheme;
         bindExportButtons();
 
-        if (localStorage.getItem(SESSION_KEY)) {
+        if (!sb) {
+          $("#authMsg").textContent =
+            "Supabase não configurado: preencha SUPABASE_URL e SUPABASE_ANON_KEY.";
+        } else {
+          // Restaura sessão existente (se "Manter conectado" ou mesma aba)
           try {
-            const s = JSON.parse(localStorage.getItem(SESSION_KEY));
-            if (s.user) {
-              currentUser = s.user;
-              const res = await apiRequest("loadUser", { username: s.user });
+            const { data: { session } } = await sb.auth.getSession();
+            if (session?.user) {
+              const res = await apiRequest("loadUser");
               userDataCache = normalizeUserData(res.data);
-              $("#auth").classList.add("hidden");
-              $("#app").classList.remove("hidden");
-              $("#app").classList.add("flex");
-              renderAll();
-            } else {
-              localStorage.removeItem(SESSION_KEY);
+              mostrarApp();
             }
           } catch (e) {
             console.error(e);
-            localStorage.removeItem(SESSION_KEY);
+            await sb.auth.signOut().catch(() => {});
           }
         }
 
@@ -2347,21 +2505,27 @@
           e.preventDefault();
           const u = $("#loginUser").value.trim().toLowerCase();
           const p = $("#loginPass").value;
+          if (!u || !p) {
+            $("#authMsg").textContent = "Informe usuário e senha.";
+            return;
+          }
 
+          // Define onde a sessão será guardada ANTES de logar
+          localStorage.setItem(REMEMBER_KEY, $("#loginRemember").checked ? "1" : "0");
+
+          const btn = $("#btnLoginSubmit");
+          btn.disabled = true;
+          btn.textContent = "Entrando…";
           try {
             const res = await apiRequest("login", { username: u, password: p });
-            currentUser = u;
             userDataCache = normalizeUserData(res.data);
-            if ($("#loginRemember").checked) {
-              localStorage.setItem(SESSION_KEY, JSON.stringify({ user: u }));
-            }
             $("#authMsg").textContent = "";
-            $("#auth").classList.add("hidden");
-            $("#app").classList.remove("hidden");
-            $("#app").classList.add("flex");
-            renderAll();
+            mostrarApp();
           } catch (err) {
             $("#authMsg").textContent = err.message;
+          } finally {
+            btn.disabled = false;
+            btn.textContent = "Acessar Sistema";
           }
         };
 
@@ -2372,22 +2536,38 @@
           const p2 = $("#regPass2").value;
 
           if (p1 !== p2) return alert("Senhas não conferem");
+          if (p1.length < 6) return alert("A senha deve ter pelo menos 6 caracteres.");
 
+          const btn = $("#btnRegisterSubmit");
+          btn.disabled = true;
+          btn.textContent = "Criando…";
           try {
-            await apiRequest("register", {
+            const res = await apiRequest("register", {
               username: u,
               password: p1,
-              seedData: seedUser(u),
+              seedData: seedUser(u.split("@")[0]),
             });
-            alert("Conta criada! Faça login.");
+            alert(
+              res.needsConfirmation
+                ? "Conta criada! Confirme o e-mail recebido antes de entrar."
+                : "Conta criada! Faça login.",
+            );
             $("#btnTabLogin").click();
+            $("#loginUser").value = u;
           } catch (err) {
             alert(err.message);
+          } finally {
+            btn.disabled = false;
+            btn.textContent = "Criar Conta";
           }
         };
 
-        $("#btnLogout").onclick = () => {
-          localStorage.removeItem(SESSION_KEY);
+        $("#btnLogout").onclick = async () => {
+          try {
+            if (sb) await sb.auth.signOut();
+          } catch (e) {
+            console.error(e);
+          }
           location.reload();
         };
 
@@ -2736,6 +2916,8 @@
               oldPassword: old,
               newPassword: nw,
             });
+            $("#oldPass").value = "";
+            $("#newPass").value = "";
             alert("Senha alterada com sucesso!");
             closeSettings();
           } catch (err) {
@@ -2934,7 +3116,6 @@
 
       async function login(u, p) {
         const res = await apiRequest("login", { username: u, password: p });
-        currentUser = u;
         userDataCache = normalizeUserData(res.data);
         return true;
       }
