@@ -292,6 +292,24 @@
             </button>
           </form>
 
+          <div class="flex items-center gap-3 my-5">
+            <div class="h-px flex-1 bg-zinc-200 dark:bg-zinc-700"></div>
+            <span class="text-xs font-bold text-zinc-400 uppercase">ou</span>
+            <div class="h-px flex-1 bg-zinc-200 dark:bg-zinc-700"></div>
+          </div>
+
+          <button
+            type="button"
+            id="btnGoogleLogin"
+            class="w-full py-3.5 rounded-xl bg-white border border-zinc-200 text-zinc-700 font-bold shadow-sm hover:bg-zinc-50 transition-all flex items-center justify-center gap-3 dark:bg-zinc-800 dark:border-zinc-700 dark:text-white dark:hover:bg-zinc-700"
+          >
+            <i class="fa-brands fa-google text-lg"></i>
+            <span id="btnGoogleLabel">Continuar com Google</span>
+          </button>
+          <p class="mt-2 text-xs text-center text-zinc-400">
+            Entra na sua conta ou cria uma nova automaticamente.
+          </p>
+
           <p
             id="authMsg"
             class="mt-4 text-sm text-center font-medium text-red-500 min-h-[20px]"
@@ -1715,7 +1733,7 @@
                 storage: authStorage,
                 persistSession: true,
                 autoRefreshToken: true,
-                detectSessionInUrl: false,
+                detectSessionInUrl: true, // necessário para o retorno do login com Google
               },
             })
           : null;
@@ -1731,7 +1749,7 @@
 
       const usernameFromUser = (user) =>
         user?.user_metadata?.username ||
-        String(user?.email || "").split("@")[0] ||
+        String(user?.email || "").split("@")[0] || // contas Google: parte antes do @
         "user";
 
       function traduzErroAuth(error) {
@@ -1742,6 +1760,9 @@
           return "E-mail ainda não confirmado. Desative 'Confirm email' no Supabase ou confirme pelo link recebido.";
         if (/password should be at least/i.test(msg)) return "A senha deve ter pelo menos 6 caracteres.";
         if (/invalid.*email|email.*invalid/i.test(msg)) return "Usuário inválido. Use apenas letras, números, ponto, hífen ou _.";
+        if (/provider is not enabled|unsupported provider/i.test(msg))
+          return "Login com Google ainda não foi ativado no Supabase (Authentication > Providers > Google).";
+        if (/access_denied/i.test(msg)) return "Login com Google cancelado.";
         if (/rate limit/i.test(msg)) return "Muitas tentativas. Aguarde alguns minutos.";
         if (/failed to fetch/i.test(msg)) return "Sem conexão com o servidor. Verifique sua internet.";
         return msg || "Erro ao comunicar com o Supabase.";
@@ -1829,6 +1850,20 @@
             return { ok: true, needsConfirmation: true };
           }
 
+          case "loginGoogle": {
+            // Redireciona para o Google. Na volta, a sessão é restaurada no window.onload
+            // e a conta (com os dados iniciais) é criada sozinha no primeiro acesso.
+            const { error } = await sb.auth.signInWithOAuth({
+              provider: "google",
+              options: {
+                redirectTo: window.location.origin + window.location.pathname,
+                queryParams: { prompt: "select_account" },
+              },
+            });
+            if (error) throw new Error(traduzErroAuth(error));
+            return { ok: true, redirecting: true };
+          }
+
           case "loadUser": {
             const { data: { user } } = await sb.auth.getUser();
             if (!user) throw new Error("Sessão expirada. Faça login novamente.");
@@ -1849,6 +1884,12 @@
             }
             const { data: { user } } = await sb.auth.getUser();
             if (!user) throw new Error("Sessão expirada. Faça login novamente.");
+            const temSenha = (user.identities || []).some((i) => i.provider === "email");
+            if (!temSenha) {
+              throw new Error(
+                "Esta conta entra pelo Google e não tem senha própria. A senha é gerenciada na sua Conta Google.",
+              );
+            }
             // Confirma a senha atual antes de trocar
             const { error: errOld } = await sb.auth.signInWithPassword({
               email: user.email,
@@ -2486,7 +2527,17 @@
           $("#authMsg").textContent =
             "Supabase não configurado: preencha SUPABASE_URL e SUPABASE_ANON_KEY.";
         } else {
-          // Restaura sessão existente (se "Manter conectado" ou mesma aba)
+          // Se o Google/Supabase devolveu erro na URL, mostra e limpa o endereço
+          const urlErro = new URLSearchParams(
+            (location.hash || "").replace(/^#/, "") || location.search,
+          );
+          const erroOAuth = urlErro.get("error_description") || urlErro.get("error");
+          if (erroOAuth) {
+            $("#authMsg").textContent = traduzErroAuth(erroOAuth.replace(/\+/g, " "));
+            history.replaceState(null, "", location.pathname);
+          }
+
+          // Restaura sessão existente (se "Manter conectado", mesma aba ou retorno do Google)
           try {
             const { data: { session } } = await sb.auth.getSession();
             if (session?.user) {
@@ -2508,6 +2559,28 @@
         $("#btnTabRegister").onclick = () => {
           $("#formLogin").classList.add("hidden");
           $("#formRegister").classList.remove("hidden");
+        };
+
+        $("#btnGoogleLogin").onclick = async () => {
+          if (location.protocol === "file:") {
+            $("#authMsg").textContent =
+              "O login com Google só funciona com o sistema publicado (https) ou em http://localhost.";
+            return;
+          }
+          // Define onde a sessão será guardada ANTES de sair para o Google
+          localStorage.setItem(REMEMBER_KEY, $("#loginRemember").checked ? "1" : "0");
+
+          const btn = $("#btnGoogleLogin");
+          btn.disabled = true;
+          $("#btnGoogleLabel").textContent = "Abrindo o Google…";
+          $("#authMsg").textContent = "";
+          try {
+            await apiRequest("loginGoogle");
+          } catch (err) {
+            $("#authMsg").textContent = err.message;
+            btn.disabled = false;
+            $("#btnGoogleLabel").textContent = "Continuar com Google";
+          }
         };
 
         $("#formLogin").onsubmit = async (e) => {
